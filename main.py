@@ -13,14 +13,8 @@ from torch.utils.data import DataLoader
 from thop import profile
 
 from dataset import DATASET_NAMES, BipedDataset, TestDataset, dataset_info
-# from loss import *
 from loss2 import *
-# from modelB6 import LDC
-# from modelB5 import LDC
 from modelB4 import LDC
-# from modelB3 import LDC
-# from modelB2 import LDC
-# from model6 import LDC
 from utils.img_processing import (image_normalization, save_image_batch_to_disk,
                    visualize_result, count_parameters)
 
