@@ -1,1 +1,3 @@
-"# LDC_WBC-application-version" 
+# LDC: Lightweight Dense CNN for Edge Detection
+
+https://github.com/xavysp/LDC
