@@ -12,15 +12,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from thop import profile
 
-from dataset import DATASET_NAMES, BipedDataset, TestDataset, dataset_info
-from loss2 import *
-from modelB4 import LDC
+from dataset import DATASET_NAMES, TrainDataset, TestDataset, dataset_info, MODEL_DIR
+from loss import *
+from model import LDC
 from utils.img_processing import (image_normalization, save_image_batch_to_disk,
                    visualize_result, count_parameters)
 
-IS_LINUX = True if platform.system()=="Linux" else False
 def train_one_epoch(epoch, dataloader, model, criterions, optimizer, device,
-                    log_interval_vis, tb_writer, args=None):
+                    log_interval_vis, args=None):
 
     imgs_res_folder = os.path.join(args.output_dir, 'current_res')
     os.makedirs(imgs_res_folder,exist_ok=True)
@@ -52,9 +51,8 @@ def train_one_epoch(epoch, dataloader, model, criterions, optimizer, device,
         loss.backward()
         optimizer.step()
         loss_avg.append(loss.item())
-        if epoch==0 and (batch_id==100 and tb_writer is not None):
+        if epoch==0 and (batch_id==100):
             tmp_loss = np.array(loss_avg).mean()
-            tb_writer.add_scalar('loss', tmp_loss,epoch)
 
         if batch_id % 10 == 0:
             print(time.ctime(), 'Epoch: {0} Sample {1}/{2} Loss: {3}'
@@ -133,7 +131,7 @@ def test(checkpoint_path, dataloader, model, device, output_dir, args):
         total_duration = []
         for batch_id, sample_batched in enumerate(dataloader):
             images = sample_batched['images'].to(device)
-            if not args.test_data == "CLASSIC":
+            if not args.test_data == "TEST":
                 labels = sample_batched['labels'].to(device)
             file_names = sample_batched['file_names']
             image_shape = sample_batched['image_shape']
@@ -182,7 +180,7 @@ def testPich(checkpoint_path, dataloader, model, device, output_dir, args):
         total_duration = []
         for batch_id, sample_batched in enumerate(dataloader):
             images = sample_batched['images'].to(device)
-            if not args.test_data == "CLASSIC":
+            if not args.test_data == "TEST":
                 labels = sample_batched['labels'].to(device)
             file_names = sample_batched['file_names']
             image_shape = sample_batched['image_shape']
@@ -208,76 +206,100 @@ def testPich(checkpoint_path, dataloader, model, device, output_dir, args):
 
 
 def parse_args():
-    """Parse command line arguments."""
     parser = argparse.ArgumentParser(description='LDC trainer.')
-    parser.add_argument('--choose_test_data',
+    parser.add_argument('--train_dataset',
                         type=int,
-                        default=-1, # uded 14
+                        default=0, # BIPED
                         help='Choose a dataset for testing: 0 - 8')
-    # ----------- test -------0--
 
-
-    TEST_DATA = DATASET_NAMES[parser.parse_args().choose_test_data] # max 8
-    test_inf = dataset_info(TEST_DATA, is_linux=IS_LINUX)
-    test_dir = test_inf['data_dir']
-    is_testing =False
-
-    # Training settings
-    # BIPED-B2=1, BIPDE-B3=2, just for evaluation, using LDC trained with 2 or 3 bloacks
-    TRAIN_DATA = DATASET_NAMES[0] # BIPED=0, BRIND=6, MDBD=10
-    train_inf = dataset_info(TRAIN_DATA, is_linux=IS_LINUX)
+    TRAIN_DATA = DATASET_NAMES[parser.parse_args().train_dataset]
+    train_inf = dataset_info(TRAIN_DATA)
     train_dir = train_inf['data_dir']
+    
+    parser.add_argument('--val_dataset',
+                        type=int,
+                        default=1, # CUSTOM
+                        help='Choose a dataset for testing: 0 - 8')
+    
+    VAL_DATA = DATASET_NAMES[parser.parse_args().val_dataset]
+    val_inf = dataset_info(VAL_DATA)
+    val_dir = val_inf['data_dir']
 
-    # Data parameters
-    parser.add_argument('--input_dir',
+    parser.add_argument('--test_dataset',
+                        type=int,
+                        default=2, # CUSTOM
+                        help='Choose a dataset for testing: 0 - 8')
+    
+    TEST_DATA = DATASET_NAMES[parser.parse_args().test_dataset]
+    test_inf = dataset_info(TEST_DATA)
+    test_dir = test_inf['data_dir']
+
+    is_testing =False
+    model_dir = MODEL_DIR
+    parser.add_argument('--is_testing',type=bool,
+                        default=is_testing,
+                        help='Script in testing mode.')
+    parser.add_argument('--model_dir',
+                        type=str,
+                        default=model_dir,
+                        help='model_dir.')
+    
+
+    # Input DIR
+    parser.add_argument('--train_dir',
                         type=str,
                         default=train_dir,
-                        help='the path to the directory with the input data.')
-    parser.add_argument('--input_val_dir',
+                        help='the path to the directory with the train data.')
+    parser.add_argument('--val_dir',
+                        type=str,
+                        default=val_inf['data_dir'],
+                        help='the path to the directory with the input data for validation.')
+    parser.add_argument('--test_dir',
                         type=str,
                         default=test_inf['data_dir'],
-                        help='the path to the directory with the input data for validation.')
+                        help='the path to the directory with the input data for test.')
+    # Output DIR
     parser.add_argument('--output_dir',
                         type=str,
-                        default='checkpoints',
+                        default='result_output',
                         help='the path to output the results.')
+    parser.add_argument('--res_dir',
+                        type=str,
+                        default='result',
+                        help='Result directory')
+    # DataSet
     parser.add_argument('--train_data',
                         type=str,
                         choices=DATASET_NAMES,
                         default=TRAIN_DATA,
-                        help='Name of the dataset.')# TRAIN_DATA,BIPED-B3
+                        help='Name of the dataset.')
+    parser.add_argument('--val_data',
+                        type=str,
+                        choices=DATASET_NAMES,
+                        default=VAL_DATA,
+                        help='Name of the dataset.')
     parser.add_argument('--test_data',
                         type=str,
                         choices=DATASET_NAMES,
                         default=TEST_DATA,
                         help='Name of the dataset.')
-    parser.add_argument('--test_list',
-                        type=str,
-                        default=test_inf['test_list'],
-                        help='Dataset sample indices list.')
-    parser.add_argument('--train_list',
-                        type=str,
-                        default=train_inf['train_list'],
-                        help='Dataset sample indices list.')
-    parser.add_argument('--is_testing',type=bool,
-                        default=is_testing,
-                        help='Script in testing mode.')
-    parser.add_argument('--predict_all',
-                        type=bool,
-                        default=False,
-                        help='True: Generate all LDC outputs in all_edges ')
-    parser.add_argument('--double_img',
-                        type=bool,
-                        default=False,
-                        help='True: use same 2 imgs changing channels')  # Just for test
-    parser.add_argument('--resume',
-                        type=bool,
-                        default=False,
-                        help='use previous trained data')  # Just for test
-    parser.add_argument('--checkpoint_data',
-                        type=str,
-                        default='16/16_model.pth',# 37 for biped 60 MDBD
-                        help='Checkpoint path.')
+    # Data size
+    parser.add_argument('--img_width',
+                        type=int,
+                        default=352,
+                        help='Image width for training.') # BIPED 352 BSDS 352/320 MDBD 480
+    parser.add_argument('--img_height',
+                        type=int,
+                        default=352,
+                        help='Image height for training.') # BIPED 480 BSDS 352/320
+    parser.add_argument('--val_img_width',
+                        type=int,
+                        default=val_inf['img_width'],
+                        help='Image width for testing.')
+    parser.add_argument('--val_img_height',
+                        type=int,
+                        default=val_inf['img_height'],
+                        help='Image height for testing.')
     parser.add_argument('--test_img_width',
                         type=int,
                         default=test_inf['img_width'],
@@ -286,15 +308,19 @@ def parse_args():
                         type=int,
                         default=test_inf['img_height'],
                         help='Image height for testing.')
-    parser.add_argument('--res_dir',
-                        type=str,
-                        default='result',
-                        help='Result directory')
+    #Option
+    parser.add_argument('--predict_all',
+                        type=bool,
+                        default=False,
+                        help='True: Generate all LDC outputs in all_edges ')
+    parser.add_argument('--double_img',
+                        type=bool,
+                        default=False,
+                        help='True: use same 2 imgs changing channels')  # Just for test
     parser.add_argument('--log_interval_vis',
                         type=int,
                         default=100,
                         help='The NO B to wait before printing test predictions. 200')
-
     parser.add_argument('--epochs',
                         type=int,
                         default=25,
@@ -308,10 +334,6 @@ def parse_args():
                         help='weight decay (Good 5e-6)')
     parser.add_argument('--adjust_lr', default=[6,12,18], type=int,
                         help='Learning rate step size.')  # [6,9,19]
-    parser.add_argument('--version_notes',
-                        default='LDC-BIPED: B4 Exp 67L3 xavier init normal+ init normal CatsLoss2 Cofusion',
-                        type=str,
-                        help='version notes')
     parser.add_argument('--batch_size',
                         type=int,
                         default=8,
@@ -321,24 +343,9 @@ def parse_args():
                         default=8,
                         type=int,
                         help='The number of workers for the dataloaders.')
-    parser.add_argument('--tensorboard',type=bool,
-                        default=True,
-                        help='Use Tensorboard for logging.'),
-    parser.add_argument('--img_width',
-                        type=int,
-                        default=352,
-                        help='Image width for training.') # BIPED 352 BSDS 352/320 MDBD 480
-    parser.add_argument('--img_height',
-                        type=int,
-                        default=352,
-                        help='Image height for training.') # BIPED 480 BSDS 352/320
     parser.add_argument('--channel_swap',
                         default=[2, 1, 0],
                         type=int)
-    parser.add_argument('--resume_chpt',
-                        default='result/resume/',
-                        type=str,
-                        help='resume training')
     parser.add_argument('--crop_img',
                         default=True,
                         type=bool,
@@ -358,75 +365,35 @@ def main(args):
     print(f"Number of GPU's available: {torch.cuda.device_count()}")
     print(f"Pytorch version: {torch.__version__}")
 
-    # Tensorboard summary writer
-
-    tb_writer = None
-    training_dir = os.path.join(args.output_dir,args.train_data)
-    os.makedirs(training_dir,exist_ok=True)
-    checkpoint_path = os.path.join(args.output_dir, args.train_data,args.checkpoint_data)
-    if args.tensorboard and not args.is_testing:
-        # from tensorboardX import SummaryWriter  # previous torch version
-        from torch.utils.tensorboard import SummaryWriter # for torch 1.4 or greather
-        tb_writer = SummaryWriter(log_dir=training_dir)
-        # saving training settings
-        training_notes =['LDC, Xavier Normal Init, LR= ' + str(args.lr) + ' WD= '
-                          + str(args.wd) + ' image size = ' + str(args.img_width)
-                          + ' adjust LR=' + str(args.adjust_lr) +' LRs= '
-                          + str(args.lrs)+' Loss Function= CAST-loss2.py '
-                          + str(time.asctime())+args.version_notes]
-        info_txt = open(os.path.join(training_dir, 'training_settings.txt'), 'w')
-        info_txt.write(str(training_notes))
-        info_txt.close()
-
     # Get computing device
     device = torch.device('cpu' if torch.cuda.device_count() == 0
                           else 'cuda')
 
     # Instantiate model and move it to the computing device
     model = LDC().to(device)
-    # model = nn.DataParallel(model)
     ini_epoch =0
-    if not args.is_testing:
-        if args.resume:
-            checkpoint_path2= os.path.join(args.output_dir, 'BIPED-54-B4',args.checkpoint_data)
-            ini_epoch=8
-            model.load_state_dict(torch.load(checkpoint_path2,
-                                         map_location=device))
-        dataset_train = BipedDataset(args.input_dir,
-                                     img_width=args.img_width,
-                                     img_height=args.img_height,
-                                     mean_bgr=args.mean_pixel_values[0:3] if len(
-                                         args.mean_pixel_values) == 4 else args.mean_pixel_values,
-                                     train_mode='train',
-                                     arg=args
-                                     )
-        dataloader_train = DataLoader(dataset_train,
-                                      batch_size=args.batch_size,
-                                      shuffle=True,
-                                      num_workers=args.workers)
 
-    dataset_val = TestDataset(args.input_val_dir,
-                              test_data=args.test_data,
-                              img_width=args.test_img_width,
-                              img_height=args.test_img_height,
-                              mean_bgr=args.mean_pixel_values[0:3] if len(
-                                  args.mean_pixel_values) == 4 else args.mean_pixel_values,
-                              test_list=args.test_list, arg=args
-                              )
-    dataloader_val = DataLoader(dataset_val,
-                                batch_size=1,
-                                shuffle=False,
-                                num_workers=args.workers)
     # Testing
     if args.is_testing:
-
+        dataset_test = TestDataset(args.test_dir,
+                                test_data=args.test_data,
+                                img_width=args.test_img_width,
+                                img_height=args.test_img_height,
+                                mean_bgr=args.mean_pixel_values[0:3] if len(
+                                    args.mean_pixel_values) == 4 else args.mean_pixel_values,
+                                arg=args
+                                )
+        dataloader_test = DataLoader(dataset_test,
+                                    batch_size=1,
+                                    shuffle=False,
+                                    num_workers=args.workers)
         output_dir = os.path.join(args.res_dir, args.train_data+"2"+ args.test_data)
         print(f"output_dir: {output_dir}")
         if args.double_img:
             # run twice the same image changing the image's channels
-            testPich(checkpoint_path, dataloader_val, model, device, output_dir, args)
+            testPich(args.checkpoint_path, dataloader_test, model, device, output_dir, args)
         else:
-            test(checkpoint_path, dataloader_val, model, device, output_dir, args)
+            test(args.checkpoint_path, dataloader_test, model, device, output_dir, args)
 
         # Count parameters:
         num_param = count_parameters(model)
@@ -435,6 +402,31 @@ def main(args):
         print(num_param)
         print('-------------------------------------------------------')
         return
+    
+    # Training
+    dataset_train = TrainDataset(args.train_dir,
+                                    img_width=args.img_width,
+                                    img_height=args.img_height,
+                                    mean_bgr=args.mean_pixel_values[0:3] if len(
+                                        args.mean_pixel_values) == 4 else args.mean_pixel_values,
+                                    arg=args
+                                    )
+    dataloader_train = DataLoader(dataset_train,
+                                    batch_size=args.batch_size,
+                                    shuffle=True,
+                                    num_workers=args.workers)
+    dataset_val = TestDataset(args.val_dir,
+                            test_data=args.val_data,
+                            img_width=args.val_img_width,
+                            img_height=args.val_img_height,
+                            mean_bgr=args.mean_pixel_values[0:3] if len(
+                                args.mean_pixel_values) == 4 else args.mean_pixel_values,
+                            arg=args
+                            )
+    dataloader_val = DataLoader(dataset_val,
+                                batch_size=1,
+                                shuffle=False,
+                                num_workers=args.workers)
 
     criterion1 = cats_loss #bdcn_loss2
     criterion2 = bdcn_loss2#cats_loss#f1_accuracy2
@@ -473,23 +465,15 @@ def main(args):
         # Create output directories
 
         output_dir_epoch = os.path.join(args.output_dir,args.train_data, str(epoch))
-        img_test_dir = os.path.join(output_dir_epoch, args.test_data + '_res')
+        img_test_dir = os.path.join(output_dir_epoch, args.val_data + '_res')
         os.makedirs(output_dir_epoch,exist_ok=True)
         os.makedirs(img_test_dir,exist_ok=True)
-
-        # validate_one_epoch(epoch,
-        #                    dataloader_val,
-        #                    model,
-        #                    device,
-        #                    img_test_dir,
-        #                    arg=args)
 
         avg_loss =train_one_epoch(epoch,dataloader_train,
                         model, criterion,
                         optimizer,
                         device,
                         args.log_interval_vis,
-                        tb_writer=tb_writer,
                         args=args)
         validate_one_epoch(epoch,
                            dataloader_val,
@@ -501,10 +485,6 @@ def main(args):
         # Save model after end of every epoch
         torch.save(model.module.state_dict() if hasattr(model, "module") else model.state_dict(),
                    os.path.join(output_dir_epoch, '{0}_model.pth'.format(epoch)))
-        if tb_writer is not None:
-            tb_writer.add_scalar('loss',
-                                 avg_loss,
-                                 epoch+1)
         print('Last learning rate> ', optimizer.param_groups[0]['lr'])
 
     num_param = count_parameters(model)
